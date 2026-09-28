@@ -822,7 +822,7 @@ elif menu == "🗺️ Quản lý Tour":
                     value=float(
                         tour["gia_tour"] or 0
                     ),
-                    step=100000.0
+                    step=10000000
                 )
 
                 so_cho_edit = st.number_input(
