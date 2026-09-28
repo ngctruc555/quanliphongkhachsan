@@ -1,5 +1,6 @@
 import streamlit as st
-import sqlite3
+import mysql.connector
+from mysql.connector import Error
 import pandas as pd
 from datetime import date, datetime
 
@@ -19,19 +20,19 @@ st.set_page_config(
 # DATABASE
 # ============================================================
 
-DB_NAME = "quan_ly_tour.db"
-
+DB_CONFIG = {
+    "host": "mysql-25a34fbe-ngctruc5-4830.e.aivencloud.com",
+    "port": 26716,
+    "database": "defaultdb",
+    "user": "avnadmin",
+    "password": "AVNS_1JPNssDgmO_BqXf9Rmf",
+    "ssl_disabled": False,
+}
 
 def get_connection():
-    conn = sqlite3.connect(
-        DB_NAME,
-        check_same_thread=False
-    )
-    conn.row_factory = sqlite3.Row
-    return conn
+    """Tạo kết nối MySQL tới Aiven."""
+    return mysql.connector.connect(**DB_CONFIG)
 
-
-conn = get_connection()
 
 
 # ============================================================
@@ -39,7 +40,7 @@ conn = get_connection()
 # ============================================================
 
 def init_database():
-
+    conn = get_connection()
     cursor = conn.cursor()
 
     # --------------------------------------------------------
@@ -48,20 +49,20 @@ def init_database():
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS tours (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ma_tour TEXT UNIQUE NOT NULL,
-            ten_tour TEXT NOT NULL,
-            diem_den TEXT NOT NULL,
-            thoi_gian TEXT,
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            ma_tour VARCHAR(50) UNIQUE NOT NULL,
+            ten_tour VARCHAR(255) NOT NULL,
+            diem_den VARCHAR(255) NOT NULL,
+            thoi_gian VARCHAR(100),
             so_ngay INTEGER,
-            ngay_khoi_hanh TEXT,
-            ngay_ket_thuc TEXT,
+            ngay_khoi_hanh VARCHAR(100),
+            ngay_ket_thuc VARCHAR(100),
             so_cho INTEGER DEFAULT 0,
-            gia_tour REAL DEFAULT 0,
-            huong_dan_vien TEXT,
-            trang_thai TEXT DEFAULT 'Đang hoạt động',
+            gia_tour DECIMAL(15,2) DEFAULT 0,
+            huong_dan_vien VARCHAR(255),
+            trang_thai VARCHAR(100) DEFAULT 'Đang hoạt động',
             mo_ta TEXT,
-            ngay_tao TEXT
+            ngay_tao DATETIME
         )
     """)
 
@@ -71,13 +72,13 @@ def init_database():
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS customers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ma_khach TEXT UNIQUE NOT NULL,
-            ho_ten TEXT NOT NULL,
-            so_dien_thoai TEXT,
-            email TEXT,
-            dia_chi TEXT,
-            ngay_tao TEXT
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            ma_khach VARCHAR(50) UNIQUE NOT NULL,
+            ho_ten VARCHAR(255) NOT NULL,
+            so_dien_thoai VARCHAR(30),
+            email VARCHAR(255),
+            dia_chi VARCHAR(500),
+            ngay_tao DATETIME
         )
     """)
 
@@ -87,13 +88,13 @@ def init_database():
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS bookings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ma_dat_tour TEXT UNIQUE NOT NULL,
-            ma_tour TEXT NOT NULL,
-            ma_khach TEXT NOT NULL,
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            ma_dat_tour VARCHAR(50) UNIQUE NOT NULL,
+            ma_tour VARCHAR(50) NOT NULL,
+            ma_khach VARCHAR(50) NOT NULL,
             so_nguoi INTEGER DEFAULT 1,
-            tong_tien REAL DEFAULT 0,
-            ngay_dat TEXT,
+            tong_tien DECIMAL(15,2) DEFAULT 0,
+            ngay_dat DATE,
             trang_thai TEXT DEFAULT 'Chờ xác nhận',
             ghi_chu TEXT
         )
@@ -218,7 +219,7 @@ Chưa bao gồm Buffet
             """
             SELECT id
             FROM tours
-            WHERE ma_tour = ?
+            WHERE ma_tour = %s
             """,
             (tour[0],)
         )
@@ -244,7 +245,7 @@ Chưa bao gồm Buffet
                     mo_ta,
                     ngay_tao
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     tour[0],
@@ -268,7 +269,12 @@ Chưa bao gồm Buffet
     conn.commit()
 
 
-init_database()
+try:
+    init_database()
+except Error as e:
+    st.error(f"❌ Không thể kết nối MySQL Aiven: {e}")
+    st.stop()
+
 
 
 # ============================================================
@@ -276,25 +282,30 @@ init_database()
 # ============================================================
 
 def get_data(query, params=()):
-    return pd.read_sql_query(
-        query,
-        conn,
-        params=params
-    )
+    """Đọc dữ liệu từ MySQL và trả về DataFrame."""
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        return pd.DataFrame(rows)
+    finally:
+        cursor.close()
+        conn.close()
 
 
 def execute_query(query, params=()):
-
+    """Thực thi INSERT/UPDATE/DELETE trên MySQL."""
+    conn = get_connection()
     cursor = conn.cursor()
+    try:
+        cursor.execute(query, params)
+        conn.commit()
+        return cursor.rowcount
+    finally:
+        cursor.close()
+        conn.close()
 
-    cursor.execute(
-        query,
-        params
-    )
-
-    conn.commit()
-
-    return cursor
 
 
 def format_money(value):
@@ -726,7 +737,7 @@ elif menu == "🗺️ Quản lý Tour":
                                 mo_ta,
                                 ngay_tao
                             )
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             """,
                             (
                                 ma_tour,
@@ -751,7 +762,7 @@ elif menu == "🗺️ Quản lý Tour":
                             "✅ Thêm tour thành công!"
                         )
 
-                    except sqlite3.IntegrityError:
+                    except mysql.connector.IntegrityError:
 
                         st.error(
                             "❌ Mã tour đã tồn tại."
@@ -894,18 +905,18 @@ elif menu == "🗺️ Quản lý Tour":
                         """
                         UPDATE tours
                         SET
-                            ma_tour = ?,
-                            ten_tour = ?,
-                            diem_den = ?,
-                            thoi_gian = ?,
-                            ngay_khoi_hanh = ?,
-                            ngay_ket_thuc = ?,
-                            so_cho = ?,
-                            gia_tour = ?,
-                            huong_dan_vien = ?,
-                            trang_thai = ?,
-                            mo_ta = ?
-                        WHERE id = ?
+                            ma_tour = %s,
+                            ten_tour = %s,
+                            diem_den = %s,
+                            thoi_gian = %s,
+                            ngay_khoi_hanh = %s,
+                            ngay_ket_thuc = %s,
+                            so_cho = %s,
+                            gia_tour = %s,
+                            huong_dan_vien = %s,
+                            trang_thai = %s,
+                            mo_ta = %s
+                        WHERE id = %s
                         """,
                         (
                             ma,
@@ -932,7 +943,7 @@ elif menu == "🗺️ Quản lý Tour":
                     execute_query(
                         """
                         DELETE FROM tours
-                        WHERE id = ?
+                        WHERE id = %s
                         """,
                         (selected_id,)
                     )
@@ -1048,7 +1059,7 @@ elif menu == "👥 Khách hàng":
                                 dia_chi,
                                 ngay_tao
                             )
-                            VALUES (?, ?, ?, ?, ?, ?)
+                            VALUES (%s, %s, %s, %s, %s, %s)
                             """,
                             (
                                 ma_khach,
@@ -1066,7 +1077,7 @@ elif menu == "👥 Khách hàng":
                             "✅ Thêm khách hàng thành công!"
                         )
 
-                    except sqlite3.IntegrityError:
+                    except mysql.connector.IntegrityError:
 
                         st.error(
                             "❌ Mã khách hàng đã tồn tại."
@@ -1202,25 +1213,13 @@ elif menu == "📋 Đặt Tour":
             use_container_width=True
         ):
 
-            cursor = conn.cursor()
-
-            # Tạo mã tự động
-            cursor.execute(
-                """
-                SELECT COUNT(*)
-                FROM bookings
-                """
-            )
-
-            count = cursor.fetchone()[0] + 1
-
-            ma_dat = (
-                f"DT{count:04d}"
-            )
+            # Tạo mã đặt tour tự động
+            count_df = get_data("SELECT COUNT(*) AS total FROM bookings")
+            count = int(count_df.iloc[0]["total"]) + 1
+            ma_dat = f"DT{count:04d}"
 
             try:
-
-                cursor.execute(
+                execute_query(
                     """
                     INSERT INTO bookings (
                         ma_dat_tour,
@@ -1232,7 +1231,7 @@ elif menu == "📋 Đặt Tour":
                         trang_thai,
                         ghi_chu
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         ma_dat,
@@ -1246,17 +1245,11 @@ elif menu == "📋 Đặt Tour":
                     )
                 )
 
-                conn.commit()
-
-                st.success(
-                    f"✅ Đã tạo đơn {ma_dat} thành công!"
-                )
+                st.success(f"✅ Đã tạo đơn {ma_dat} thành công!")
 
             except Exception as e:
+                st.error(f"Không thể tạo đơn: {e}")
 
-                st.error(
-                    f"Không thể tạo đơn: {e}"
-                )
 
         st.markdown("---")
 
@@ -1472,7 +1465,7 @@ elif menu == "ℹ️ Thông tin":
 
     - Python
     - Streamlit
-    - SQLite
+    - MySQL (Aiven Cloud)
     - Pandas
 
     ### Chức năng
@@ -1521,11 +1514,10 @@ elif menu == "ℹ️ Thông tin":
 
     Dữ liệu được lưu tự động trong:
 
-    `quan_ly_tour.db`
+    `defaultdb` trên Aiven Cloud
     """)
 
 
 # ============================================================
 # KẾT THÚC
 # ============================================================
-
